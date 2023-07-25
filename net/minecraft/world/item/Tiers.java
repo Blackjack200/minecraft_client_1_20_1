@@ -1,0 +1,55 @@
+package net.minecraft.world.item;
+
+import java.util.function.Supplier;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.util.LazyLoadedValue;
+import net.minecraft.world.item.crafting.Ingredient;
+
+public enum Tiers implements Tier {
+   WOOD(0, 59, 2.0F, 0.0F, 15, () -> Ingredient.of(ItemTags.PLANKS)),
+   STONE(1, 131, 4.0F, 1.0F, 5, () -> Ingredient.of(ItemTags.STONE_TOOL_MATERIALS)),
+   IRON(2, 250, 6.0F, 2.0F, 14, () -> Ingredient.of(Items.IRON_INGOT)),
+   DIAMOND(3, 1561, 8.0F, 3.0F, 10, () -> Ingredient.of(Items.DIAMOND)),
+   GOLD(0, 32, 12.0F, 0.0F, 22, () -> Ingredient.of(Items.GOLD_INGOT)),
+   NETHERITE(4, 2031, 9.0F, 4.0F, 15, () -> Ingredient.of(Items.NETHERITE_INGOT));
+
+   private final int level;
+   private final int uses;
+   private final float speed;
+   private final float damage;
+   private final int enchantmentValue;
+   private final LazyLoadedValue<Ingredient> repairIngredient;
+
+   private Tiers(int i, int j, float f, float f1, int k, Supplier<Ingredient> supplier) {
+      this.level = i;
+      this.uses = j;
+      this.speed = f;
+      this.damage = f1;
+      this.enchantmentValue = k;
+      this.repairIngredient = new LazyLoadedValue<>(supplier);
+   }
+
+   public int getUses() {
+      return this.uses;
+   }
+
+   public float getSpeed() {
+      return this.speed;
+   }
+
+   public float getAttackDamageBonus() {
+      return this.damage;
+   }
+
+   public int getLevel() {
+      return this.level;
+   }
+
+   public int getEnchantmentValue() {
+      return this.enchantmentValue;
+   }
+
+   public Ingredient getRepairIngredient() {
+      return this.repairIngredient.get();
+   }
+}

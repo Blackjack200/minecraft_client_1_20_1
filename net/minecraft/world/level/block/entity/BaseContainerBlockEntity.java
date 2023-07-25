@@ -1,0 +1,84 @@
+package net.minecraft.world.level.block.entity;
+
+import javax.annotation.Nullable;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.Container;
+import net.minecraft.world.LockCode;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.Nameable;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.level.block.state.BlockState;
+
+public abstract class BaseContainerBlockEntity extends BlockEntity implements Container, MenuProvider, Nameable {
+   private LockCode lockKey = LockCode.NO_LOCK;
+   @Nullable
+   private Component name;
+
+   protected BaseContainerBlockEntity(BlockEntityType<?> blockentitytype, BlockPos blockpos, BlockState blockstate) {
+      super(blockentitytype, blockpos, blockstate);
+   }
+
+   public void load(CompoundTag compoundtag) {
+      super.load(compoundtag);
+      this.lockKey = LockCode.fromTag(compoundtag);
+      if (compoundtag.contains("CustomName", 8)) {
+         this.name = Component.Serializer.fromJson(compoundtag.getString("CustomName"));
+      }
+
+   }
+
+   protected void saveAdditional(CompoundTag compoundtag) {
+      super.saveAdditional(compoundtag);
+      this.lockKey.addToTag(compoundtag);
+      if (this.name != null) {
+         compoundtag.putString("CustomName", Component.Serializer.toJson(this.name));
+      }
+
+   }
+
+   public void setCustomName(Component component) {
+      this.name = component;
+   }
+
+   public Component getName() {
+      return this.name != null ? this.name : this.getDefaultName();
+   }
+
+   public Component getDisplayName() {
+      return this.getName();
+   }
+
+   @Nullable
+   public Component getCustomName() {
+      return this.name;
+   }
+
+   protected abstract Component getDefaultName();
+
+   public boolean canOpen(Player player) {
+      return canUnlock(player, this.lockKey, this.getDisplayName());
+   }
+
+   public static boolean canUnlock(Player player, LockCode lockcode, Component component) {
+      if (!player.isSpectator() && !lockcode.unlocksWith(player.getMainHandItem())) {
+         player.displayClientMessage(Component.translatable("container.isLocked", component), true);
+         player.playNotifySound(SoundEvents.CHEST_LOCKED, SoundSource.BLOCKS, 1.0F, 1.0F);
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   @Nullable
+   public AbstractContainerMenu createMenu(int i, Inventory inventory, Player player) {
+      return this.canOpen(player) ? this.createMenu(i, inventory) : null;
+   }
+
+   protected abstract AbstractContainerMenu createMenu(int i, Inventory inventory);
+}

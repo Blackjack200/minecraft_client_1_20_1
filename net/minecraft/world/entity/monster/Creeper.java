@@ -1,0 +1,267 @@
+package net.minecraft.world.entity.monster;
+
+import java.util.Collection;
+import javax.annotation.Nullable;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.entity.AreaEffectCloud;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.PowerableMob;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.AvoidEntityGoal;
+import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
+import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
+import net.minecraft.world.entity.ai.goal.SwellGoal;
+import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+import net.minecraft.world.entity.animal.Cat;
+import net.minecraft.world.entity.animal.Ocelot;
+import net.minecraft.world.entity.animal.goat.Goat;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.gameevent.GameEvent;
+
+public class Creeper extends Monster implements PowerableMob {
+   private static final EntityDataAccessor<Integer> DATA_SWELL_DIR = SynchedEntityData.defineId(Creeper.class, EntityDataSerializers.INT);
+   private static final EntityDataAccessor<Boolean> DATA_IS_POWERED = SynchedEntityData.defineId(Creeper.class, EntityDataSerializers.BOOLEAN);
+   private static final EntityDataAccessor<Boolean> DATA_IS_IGNITED = SynchedEntityData.defineId(Creeper.class, EntityDataSerializers.BOOLEAN);
+   private int oldSwell;
+   private int swell;
+   private int maxSwell = 30;
+   private int explosionRadius = 3;
+   private int droppedSkulls;
+
+   public Creeper(EntityType<? extends Creeper> entitytype, Level level) {
+      super(entitytype, level);
+   }
+
+   protected void registerGoals() {
+      this.goalSelector.addGoal(1, new FloatGoal(this));
+      this.goalSelector.addGoal(2, new SwellGoal(this));
+      this.goalSelector.addGoal(3, new AvoidEntityGoal<>(this, Ocelot.class, 6.0F, 1.0D, 1.2D));
+      this.goalSelector.addGoal(3, new AvoidEntityGoal<>(this, Cat.class, 6.0F, 1.0D, 1.2D));
+      this.goalSelector.addGoal(4, new MeleeAttackGoal(this, 1.0D, false));
+      this.goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, 0.8D));
+      this.goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
+      this.goalSelector.addGoal(6, new RandomLookAroundGoal(this));
+      this.targetSelector.addGoal(1, new NearestAttackableTargetGoal<>(this, Player.class, true));
+      this.targetSelector.addGoal(2, new HurtByTargetGoal(this));
+   }
+
+   public static AttributeSupplier.Builder createAttributes() {
+      return Monster.createMonsterAttributes().add(Attributes.MOVEMENT_SPEED, 0.25D);
+   }
+
+   public int getMaxFallDistance() {
+      return this.getTarget() == null ? 3 : 3 + (int)(this.getHealth() - 1.0F);
+   }
+
+   public boolean causeFallDamage(float f, float f1, DamageSource damagesource) {
+      boolean flag = super.causeFallDamage(f, f1, damagesource);
+      this.swell += (int)(f * 1.5F);
+      if (this.swell > this.maxSwell - 5) {
+         this.swell = this.maxSwell - 5;
+      }
+
+      return flag;
+   }
+
+   protected void defineSynchedData() {
+      super.defineSynchedData();
+      this.entityData.define(DATA_SWELL_DIR, -1);
+      this.entityData.define(DATA_IS_POWERED, false);
+      this.entityData.define(DATA_IS_IGNITED, false);
+   }
+
+   public void addAdditionalSaveData(CompoundTag compoundtag) {
+      super.addAdditionalSaveData(compoundtag);
+      if (this.entityData.get(DATA_IS_POWERED)) {
+         compoundtag.putBoolean("powered", true);
+      }
+
+      compoundtag.putShort("Fuse", (short)this.maxSwell);
+      compoundtag.putByte("ExplosionRadius", (byte)this.explosionRadius);
+      compoundtag.putBoolean("ignited", this.isIgnited());
+   }
+
+   public void readAdditionalSaveData(CompoundTag compoundtag) {
+      super.readAdditionalSaveData(compoundtag);
+      this.entityData.set(DATA_IS_POWERED, compoundtag.getBoolean("powered"));
+      if (compoundtag.contains("Fuse", 99)) {
+         this.maxSwell = compoundtag.getShort("Fuse");
+      }
+
+      if (compoundtag.contains("ExplosionRadius", 99)) {
+         this.explosionRadius = compoundtag.getByte("ExplosionRadius");
+      }
+
+      if (compoundtag.getBoolean("ignited")) {
+         this.ignite();
+      }
+
+   }
+
+   public void tick() {
+      if (this.isAlive()) {
+         this.oldSwell = this.swell;
+         if (this.isIgnited()) {
+            this.setSwellDir(1);
+         }
+
+         int i = this.getSwellDir();
+         if (i > 0 && this.swell == 0) {
+            this.playSound(SoundEvents.CREEPER_PRIMED, 1.0F, 0.5F);
+            this.gameEvent(GameEvent.PRIME_FUSE);
+         }
+
+         this.swell += i;
+         if (this.swell < 0) {
+            this.swell = 0;
+         }
+
+         if (this.swell >= this.maxSwell) {
+            this.swell = this.maxSwell;
+            this.explodeCreeper();
+         }
+      }
+
+      super.tick();
+   }
+
+   public void setTarget(@Nullable LivingEntity livingentity) {
+      if (!(livingentity instanceof Goat)) {
+         super.setTarget(livingentity);
+      }
+   }
+
+   protected SoundEvent getHurtSound(DamageSource damagesource) {
+      return SoundEvents.CREEPER_HURT;
+   }
+
+   protected SoundEvent getDeathSound() {
+      return SoundEvents.CREEPER_DEATH;
+   }
+
+   protected void dropCustomDeathLoot(DamageSource damagesource, int i, boolean flag) {
+      super.dropCustomDeathLoot(damagesource, i, flag);
+      Entity entity = damagesource.getEntity();
+      if (entity != this && entity instanceof Creeper creeper) {
+         if (creeper.canDropMobsSkull()) {
+            creeper.increaseDroppedSkulls();
+            this.spawnAtLocation(Items.CREEPER_HEAD);
+         }
+      }
+
+   }
+
+   public boolean doHurtTarget(Entity entity) {
+      return true;
+   }
+
+   public boolean isPowered() {
+      return this.entityData.get(DATA_IS_POWERED);
+   }
+
+   public float getSwelling(float f) {
+      return Mth.lerp(f, (float)this.oldSwell, (float)this.swell) / (float)(this.maxSwell - 2);
+   }
+
+   public int getSwellDir() {
+      return this.entityData.get(DATA_SWELL_DIR);
+   }
+
+   public void setSwellDir(int i) {
+      this.entityData.set(DATA_SWELL_DIR, i);
+   }
+
+   public void thunderHit(ServerLevel serverlevel, LightningBolt lightningbolt) {
+      super.thunderHit(serverlevel, lightningbolt);
+      this.entityData.set(DATA_IS_POWERED, true);
+   }
+
+   protected InteractionResult mobInteract(Player player, InteractionHand interactionhand) {
+      ItemStack itemstack = player.getItemInHand(interactionhand);
+      if (itemstack.is(ItemTags.CREEPER_IGNITERS)) {
+         SoundEvent soundevent = itemstack.is(Items.FIRE_CHARGE) ? SoundEvents.FIRECHARGE_USE : SoundEvents.FLINTANDSTEEL_USE;
+         this.level().playSound(player, this.getX(), this.getY(), this.getZ(), soundevent, this.getSoundSource(), 1.0F, this.random.nextFloat() * 0.4F + 0.8F);
+         if (!this.level().isClientSide) {
+            this.ignite();
+            if (!itemstack.isDamageableItem()) {
+               itemstack.shrink(1);
+            } else {
+               itemstack.hurtAndBreak(1, player, (player1) -> player1.broadcastBreakEvent(interactionhand));
+            }
+         }
+
+         return InteractionResult.sidedSuccess(this.level().isClientSide);
+      } else {
+         return super.mobInteract(player, interactionhand);
+      }
+   }
+
+   private void explodeCreeper() {
+      if (!this.level().isClientSide) {
+         float f = this.isPowered() ? 2.0F : 1.0F;
+         this.dead = true;
+         this.level().explode(this, this.getX(), this.getY(), this.getZ(), (float)this.explosionRadius * f, Level.ExplosionInteraction.MOB);
+         this.discard();
+         this.spawnLingeringCloud();
+      }
+
+   }
+
+   private void spawnLingeringCloud() {
+      Collection<MobEffectInstance> collection = this.getActiveEffects();
+      if (!collection.isEmpty()) {
+         AreaEffectCloud areaeffectcloud = new AreaEffectCloud(this.level(), this.getX(), this.getY(), this.getZ());
+         areaeffectcloud.setRadius(2.5F);
+         areaeffectcloud.setRadiusOnUse(-0.5F);
+         areaeffectcloud.setWaitTime(10);
+         areaeffectcloud.setDuration(areaeffectcloud.getDuration() / 2);
+         areaeffectcloud.setRadiusPerTick(-areaeffectcloud.getRadius() / (float)areaeffectcloud.getDuration());
+
+         for(MobEffectInstance mobeffectinstance : collection) {
+            areaeffectcloud.addEffect(new MobEffectInstance(mobeffectinstance));
+         }
+
+         this.level().addFreshEntity(areaeffectcloud);
+      }
+
+   }
+
+   public boolean isIgnited() {
+      return this.entityData.get(DATA_IS_IGNITED);
+   }
+
+   public void ignite() {
+      this.entityData.set(DATA_IS_IGNITED, true);
+   }
+
+   public boolean canDropMobsSkull() {
+      return this.isPowered() && this.droppedSkulls < 1;
+   }
+
+   public void increaseDroppedSkulls() {
+      ++this.droppedSkulls;
+   }
+}
